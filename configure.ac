@@ -31,6 +31,7 @@ AM_INIT_AUTOMAKE()
 AC_CANONICAL_HOST
 
 case "$host" in
+i686-pc-cygwin) host_cpu=i386 host_os=linux ;;
 i[[3456]]86-*-linux*) host_cpu=i386 host_os=linux ;;
 i[[3456]]86-*-kfreebsd*) host_cpu=i386 host_os=linux ;;
 i[[3456]]86-*-darwin*) host_cpu=i386 host_os=darwin ;;
