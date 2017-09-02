@@ -149,3 +149,10 @@ That's it!
 
 Robert Lougher <rob@jamvm.org.uk>
 30th July 2014.
+
+
+compile in cygwin
+=================
+``` bash
+./autogen.sh --host=i686-pc-linux
+```
