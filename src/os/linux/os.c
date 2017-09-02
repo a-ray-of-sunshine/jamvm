@@ -92,8 +92,10 @@ char *nativeLibMapName(char *name) {
 }
 
 char *nativeJVMPath() {
+    char *path = "";
+
+#ifdef __linux__
     Dl_info info;
-    char *path;
 
     if(dladdr(nativeJVMPath, &info) == 0) {
         printf("Error: dladdr failed.  Aborting VM\n");
@@ -102,6 +104,7 @@ char *nativeJVMPath() {
 
     path = sysMalloc(strlen(info.dli_fname) + 1);
     strcpy(path, info.dli_fname);
+#endif
 
     return path;
 }
