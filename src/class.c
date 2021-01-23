@@ -260,12 +260,14 @@ Class *parseClass(char *classname, char *data, int offset, int len,
     READ_U2(minor_version, ptr, len);
     READ_U2(major_version, ptr, len);
 
+    // 在托管堆上分配待解析类的存储空间
     if((class = allocClass()) == NULL)
         return NULL;
 
     classblock = CLASS_CB(class);
     READ_U2(cp_count, ptr, len);
 
+    // 在本地堆上分配常量池空间
     constant_pool = &classblock->constant_pool;
     constant_pool->type = sysMalloc(cp_count);
     constant_pool->info = sysMalloc(cp_count * sizeof(ConstantPoolEntry));

@@ -415,6 +415,9 @@ retry:
     return CP_INFO(cp, cp_index);
 }
 
+/**
+ * ClassBlock.imethod_table 类的虚函数表，用来实现多态
+ * /
 MethodBlock *lookupVirtualMethod(Object *ob, MethodBlock *mb) {
     ClassBlock *cb = CLASS_CB(ob->class);
     int mtbl_idx = mb->method_table_index;
