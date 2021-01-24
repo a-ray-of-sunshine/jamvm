@@ -417,7 +417,9 @@ retry:
 
 /**
  * ClassBlock.imethod_table 类的虚函数表，用来实现多态
- * /
+ * 从对象所属类的虚函数表 imethod_table 上获得函数实现在方法表中的索引位置
+ * 然后从对象的method_table中获得实现的方法。
+ */
 MethodBlock *lookupVirtualMethod(Object *ob, MethodBlock *mb) {
     ClassBlock *cb = CLASS_CB(ob->class);
     int mtbl_idx = mb->method_table_index;

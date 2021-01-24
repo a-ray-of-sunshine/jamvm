@@ -909,15 +909,21 @@ void prepareFields(Class *class) {
         else {
             FieldBlock **list;
 
+            // L：数组类型、[：类类型
             if(fb->type[0] == 'L' || fb->type[0] == '[')
                 list = &ref_head;
-            else
+            else    // J: float 、D：double
                 if(fb->type[0] == 'J' || fb->type[0] == 'D')
                     list = &dbl_head;
                 else
                     list = &int_head;
 
+            // 设置实例字段的布局指针
+            // 就是说这个字段应该被添加到 ref_head、dbl_head、int_head里面
+            // 所以 *list == (ref_head、dbl_head、int_head)
             fb->u.static_value.p = *list;
+            // 设置head指向fb、即给head赋值
+            // 相当于 ref_head、dbl_head、int_head = fb
             *list = fb;
         }
 
@@ -977,16 +983,20 @@ void prepareFields(Class *class) {
     while(int_head != NULL) {
         FieldBlock *fb = int_head;
         int_head = int_head->u.static_value.p;
+        // 设置字段的偏移位置
         fb->u.offset = field_offset;
         field_offset += 4;
     }
 
+    // 设置ClassBlock的objectsize
    cb->object_size = field_offset;
 
    /* Construct the reference offsets list.  This is used to speed up
       scanning of an objects references during the mark phase of GC.
       If possible, merge the entry with the previous entry */
 
+    // 设置类的引用类型的字段的list，辅助GC
+    // 
    if(refs_start_offset) {
        if(spr_rfs_offsts_sze > 0 && spr_rfs_offsts_tbl[spr_rfs_offsts_sze-1].end
                                            == refs_start_offset) {
@@ -1059,8 +1069,11 @@ void linkClass(Class *class) {
    MethodBlock *mb;
 
    int new_methods_count = 0;
+   // 当前类的父类的接口总数
    int spr_imthd_tbl_sze = 0;
+   // 当前类实现的接口的总的方法个数
    int itbl_offset_count = 0;
+   // 父类的方法总数
    int spr_mthd_tbl_sze = 0;
    int method_table_size;
    int new_itable_count;
@@ -1095,11 +1108,13 @@ void linkClass(Class *class) {
    prepareFields(class);
 
    /* Prepare methods */
-
+    // A. 计算方法在方法表中的索引
    for(mb = cb->methods, i = 0; i < cb->methods_count; i++,mb++) {
        int count = 0;
        char *sig = mb->type;
 
+       // 1. 设置方法参数个数，通过方法签名计算方法参数个数
+       // 如果是实现方法则上面计算基础上加一个this指针参数个数。
        /* calculate argument count from signature */
        SCAN_SIG(sig, count+=2, count++);
 
@@ -1110,12 +1125,15 @@ void linkClass(Class *class) {
 
        mb->class = class;
 
+        // 2. 设置抽象方法的默认实现，
+        // abstract_method 直接抛出异常
        /* Set abstract method to stub */
        if(mb->access_flags & ACC_ABSTRACT) {
            mb->code_size = sizeof(abstract_method);
            mb->code = abstract_method;
        }
 
+        // 3. 设置native方法，通过类名和方法名查找到对应的native方法
        if(mb->access_flags & ACC_NATIVE) {
 
            /* set up native invoker to wrapper to resolve function 
@@ -1138,6 +1156,9 @@ void linkClass(Class *class) {
                               (mb->name[0] == '<'))
            continue;
 
+        // 4. 设置方法表索引：
+        // 1) 如果是继承的方法，则索引为父类的索引
+        // 2) 否则添加一个新的索引
        /* if it's overriding an inherited method, replace in method table */
 
        for(j = 0; j < spr_mthd_tbl_sze; j++)
@@ -1153,7 +1174,9 @@ void linkClass(Class *class) {
    }
 
    /* construct method table */
-
+    // B. 构造方法表
+    //      1. 拷贝父类的方法表
+    //      2. 填充当前类的方法到方法表中
    method_table_size = spr_mthd_tbl_sze + new_methods_count;
 
    if(!(cb->access_flags & ACC_INTERFACE)) {
@@ -1174,12 +1197,16 @@ void linkClass(Class *class) {
    /* number of interfaces implemented by this class is those implemented by
     * parent, plus number of interfaces directly implemented by this class,
     * and the total number of their superinterfaces */
-
-   new_itable_count = cb->interfaces_count;
-   for(i = 0; i < cb->interfaces_count; i++)
+   // 设置接口方法表
+   // 这个类实现的接口的数量 =
+   // 父类实现的接口的数量 +
+   // 直接由这个类实现的接口的数量 + 
+   // 它们的父接口的总数
+   new_itable_count = cb->interfaces_count; // 1. 当前类的接口数量
+   for(i = 0; i < cb->interfaces_count; i++) // 2. 父接口的接口数量
        new_itable_count += CLASS_CB(cb->interfaces[i])->imethod_table_size;
 
-   cb->imethod_table = sysMalloc((spr_imthd_tbl_sze + new_itable_count) *
+   cb->imethod_table = sysMalloc((spr_imthd_tbl_sze + new_itable_count) * // 3. 父类实现的接口的数量
                                  sizeof(ITableEntry));
 
    /* the interface references in the imethod table are updated by the
@@ -1188,38 +1215,42 @@ void linkClass(Class *class) {
    self = threadSelf();
    fastDisableSuspend(self);
 
+    // imethod_table_size 这个字段的含义是一个类实现的接口数量
    cb->imethod_table_size = spr_imthd_tbl_sze + new_itable_count;
 
+    // --------------- 填充接口表 ---------------
    /* copy parent's interface table - the offsets into the method
       table won't change */
-
+    // 1. 拷贝父类的接口表
    memcpy(cb->imethod_table, spr_imthd_tbl, spr_imthd_tbl_sze *
                                             sizeof(ITableEntry));
 
    /* now run through the extra interfaces implemented by this class,
     * fill in the interface part, and calculate the number of offsets
     * needed (i.e. the number of methods defined in the interfaces) */
-
+   // 2. 拷贝自己实现的接口
+   // 3. 拷贝自己实现的接口的父接口
    itbl_idx = spr_imthd_tbl_sze;
    for(i = 0; i < cb->interfaces_count; i++) {
        Class *intf = cb->interfaces[i];
        ClassBlock *intf_cb = CLASS_CB(intf);
 
-       cb->imethod_table[itbl_idx++].interface = intf;
-       itbl_offset_count += intf_cb->method_table_size;
+       cb->imethod_table[itbl_idx++].interface = intf;  // + 实现的接口
+       itbl_offset_count += intf_cb->method_table_size; // 此接口的方法数
 
-       for(j = 0; j < intf_cb->imethod_table_size; j++) {
+       for(j = 0; j < intf_cb->imethod_table_size; j++) { 
            Class *spr_intf = intf_cb->imethod_table[j].interface;
 
-           cb->imethod_table[itbl_idx++].interface = spr_intf;
-           itbl_offset_count += CLASS_CB(spr_intf)->method_table_size;
+           cb->imethod_table[itbl_idx++].interface = spr_intf; // + 接口的父接口
+           itbl_offset_count += CLASS_CB(spr_intf)->method_table_size; // 父接口的方法数
        }
    }
 
    fastEnableSuspend(self);
 
    /* if we're an interface all finished - offsets aren't used */
-
+    // 构造类的虚函数表即 ClassBlock.imethod_table
+    // 使用此 imethod_table 可以实现多态调用
    if(!(cb->access_flags & ACC_INTERFACE)) {
        int *offsets_pntr = sysMalloc(itbl_offset_count * sizeof(int));
        Miranda *mirandas = NULL;
@@ -1229,13 +1260,15 @@ void linkClass(Class *class) {
        /* run through table again, this time filling in the offsets array -
         * for each new interface, run through it's methods and locate
         * each method in this classes method table */
-
+       // 遍历所有接口和接口的父接口
        for(i = spr_imthd_tbl_sze; i < cb->imethod_table_size; i++) {
            Class *interface = cb->imethod_table[i].interface;
            ClassBlock *intf_cb = CLASS_CB(interface);
 
+            // 设置 offsets
            cb->imethod_table[i].offsets = offsets_pntr;
 
+            // 遍历这个接口的所有方法
            for(j = 0; j < intf_cb->methods_count; j++) {
                MethodBlock *intf_mb = &intf_cb->methods[j];
                int mtbl_idx, mrnda_idx;
@@ -1248,6 +1281,7 @@ void linkClass(Class *class) {
                   sub-classes before super-classes.  This ensures we find
                   non-overridden methods before the inherited non-accessible
                   method */
+                // 找到类中实现了这个接口的方法：名称相同，类型相同
                for(mtbl_idx = method_table_size - 1; mtbl_idx >= 0; mtbl_idx--)
                    if(intf_mb->name == method_table[mtbl_idx]->name &&
                            intf_mb->type == method_table[mtbl_idx]->type)
@@ -1256,7 +1290,7 @@ void linkClass(Class *class) {
                /* If we found the method in the method table and it's
                   a real method (i.e. implemented) or we already have
                   conflicting defaults we're done */
-               if(mtbl_idx >= 0) {
+               if(mtbl_idx >= 0) {  // 说明上面的循环匹配而退出了，说明找到方法了
                    MethodBlock *mb = method_table[mtbl_idx];
                    if(!(mb->access_flags & ACC_MIRANDA) ||
                                       mb->flags & MB_DEFAULT_CONFLICT) {
@@ -1274,7 +1308,7 @@ void linkClass(Class *class) {
                                intf_mb->type == mirandas[mrnda_idx].mb->type)
                        break;
                            
-               if(mrnda_idx == miranda_count) {
+               if(mrnda_idx == miranda_count) { // 说明 No cached Miranda method
                    int new_mtbl_idx, default_conflict = FALSE;
 
                    /* No cached Miranda method.  If we found a Miranda
@@ -1404,8 +1438,10 @@ void linkClass(Class *class) {
        }
    }
 
+    // ============ 设置方法表
    cb->method_table = method_table;
    cb->method_table_size = method_table_size;
+    // ============ 设置方法表
 
    /* Handle finalizer */
 
