@@ -1555,9 +1555,11 @@ Class *initClass(Class *class) {
    Object *excep;
    int state, i;
 
+    // 已经初始化过了，直接返回即可
    if(cb->state >= CLASS_INITED)
       return class;
 
+    // 按JVM语义，init之前一定要先link
    linkClass(class);
    objectLock(class);
 
@@ -1570,25 +1572,28 @@ Class *initClass(Class *class) {
              An interrupt will appear as if the initialiser
              failed (below), and clearing will lose the
              interrupt status */
+            // 说明有其它线程正在初始化类，等待线程初始化完成
           objectWait(class, 0, 0, FALSE);
       }
 
-   if(cb->state >= CLASS_INITED) {
+   if(cb->state >= CLASS_INITED) {//初始化成功，解锁当前线程，直接返回
       objectUnlock(class);
       return class;
    }
 
-   if(cb->state == CLASS_BAD) {
+   if(cb->state == CLASS_BAD) {// 初始化失败，解锁当前线程，抛出异常
        objectUnlock(class);
        signalException(java_lang_NoClassDefFoundError, cb->name);
        return NULL;
    }
 
+    // ======= 开始类的初始化
    cb->state = CLASS_INITING;
    cb->initing_tid = threadSelf()->id;
 
    objectUnlock(class);
 
+    // 1. 先初始化父类
    if(!(cb->access_flags & ACC_INTERFACE) && cb->super
               && (CLASS_CB(cb->super)->state != CLASS_INITED)) {
       initClass(cb->super);
@@ -1603,6 +1608,7 @@ Class *initClass(Class *class) {
       compilation can result in a getstatic to a (now) constant field,
       and the VM didn't initialise it... */
 
+    // 初始化之前先将静态字段的类型写入到static_value中
    for(i = 0; i < cb->fields_count; i++,fb++)
       if((fb->access_flags & ACC_STATIC) && fb->constant) {
          if((*fb->type == 'J') || (*fb->type == 'D'))
@@ -1611,6 +1617,8 @@ Class *initClass(Class *class) {
             fb->u.static_value.u = resolveSingleConstant(class, fb->constant);
       }
 
+    // 1. 查找类的初始化方法 <clinit>
+    // 2. 如果不为空则执行此方法，来初始化类
    if((mb = findMethod(class, SYMBOL(class_init), SYMBOL(___V))) != NULL)
       executeStaticMethod(class, mb);
 
