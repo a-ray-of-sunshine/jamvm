@@ -1052,9 +1052,9 @@ int hideFieldFromGC(FieldBlock *hidden) {
    the construction of the interface method table. */
 
 typedef struct miranda {
-    MethodBlock *mb;
-    int mtbl_idx;
-    int default_conflict;
+    MethodBlock *mb; // Miranda方法
+    int mtbl_idx;   // 此Miranda方法在方法表（method_table）的索引位置
+    int default_conflict;   // 是否与接口有冲突
 } Miranda;
 
 void linkClass(Class *class) {
@@ -1072,6 +1072,7 @@ void linkClass(Class *class) {
    // 当前类的父类的接口总数
    int spr_imthd_tbl_sze = 0;
    // 当前类实现的接口的总的方法个数
+   // = 当前类实现的接口的方法个数 + 接口的父接口实现的方法个数
    int itbl_offset_count = 0;
    // 父类的方法总数
    int spr_mthd_tbl_sze = 0;
@@ -1254,6 +1255,7 @@ void linkClass(Class *class) {
    if(!(cb->access_flags & ACC_INTERFACE)) {
        int *offsets_pntr = sysMalloc(itbl_offset_count * sizeof(int));
        Miranda *mirandas = NULL;
+       // 方法表新增项数量
        int new_mtbl_count = 0;
        int miranda_count = 0;
 
@@ -1271,8 +1273,12 @@ void linkClass(Class *class) {
             // 遍历这个接口的所有方法
            for(j = 0; j < intf_cb->methods_count; j++) {
                MethodBlock *intf_mb = &intf_cb->methods[j];
+               // mtbl_idx:  当前接口在方法表的中索引位置
+               // mrnda_idx: 当前接口在Miranda Cache表中的索引位置
                int mtbl_idx, mrnda_idx;
 
+                // 接口的静态方法、私有方法、构造函数不会被动态调用
+                // 不需要设置offsets
                if((intf_mb->access_flags & (ACC_STATIC | ACC_PRIVATE)) ||
                       (intf_mb->name[0] == '<'))
                    continue;
@@ -1309,6 +1315,7 @@ void linkClass(Class *class) {
                        break;
                            
                if(mrnda_idx == miranda_count) { // 说明 No cached Miranda method
+                    // new_mtbl_idx: 当前这个接口方法在类的方法表里面的索引
                    int new_mtbl_idx, default_conflict = FALSE;
 
                    /* No cached Miranda method.  If we found a Miranda
@@ -1324,6 +1331,10 @@ void linkClass(Class *class) {
                    if(mtbl_idx >= 0) {
                        MethodBlock *mtbl_mb = method_table[mtbl_idx];
 
+                        // 1. 方法和接口方法是抽象的
+                        // 2. (方法的miranda_mb的类型)是当前接口
+                        // 3. (方法的miranda_mb的类型)实现了当前接口
+                        // 注：方法的miranda_mb的类型 = mtbl_mb->miranda_mb->class
                        if(((mtbl_mb->access_flags & ACC_ABSTRACT) 
                                    && (intf_mb->access_flags & ACC_ABSTRACT))
                              || mtbl_mb->miranda_mb->class == interface 
@@ -1332,19 +1343,25 @@ void linkClass(Class *class) {
                            continue;
                        }
 
+                        // 方法的miranda_mb的类型 与当前接口不存在实现关系
+                        // 说明是有冲突的
                        if(!implements(mtbl_mb->miranda_mb->class, interface))
                            default_conflict = TRUE;
 
                        /* The new Miranda is an override, so it replaces
                           the method in the method table */
+                        // 用新的Miranda方法覆盖方法表里面之前的方法
                        new_mtbl_idx = mtbl_idx;
                    } else {
+                       // 方法表和Miranda Cache中都未找到
+                       // 直接新增一项
                        /* No cached Miranda, and none in the method table -
                           simply add a new Miranda - it has a new method
                           table index */
                        new_mtbl_idx = method_table_size + new_mtbl_count++;
                    }
 
+                    // Miranda cache 扩容
                    /* Extend the Miranda cache if it's full */
                    if((miranda_count % MRNDA_CACHE_INCR) == 0)
                        mirandas = sysRealloc(mirandas, (miranda_count +
@@ -1362,6 +1379,7 @@ void linkClass(Class *class) {
                       we need to override, we simply modify the cached
                       Miranda - we don't need to add a new Miranda for the
                       override */
+                    // 更新Miranda Cache中的项
                    MethodBlock *mrnda_mb = mirandas[mrnda_idx].mb;
 
                    if(!((mrnda_mb->access_flags & ACC_ABSTRACT) 
@@ -1381,26 +1399,34 @@ void linkClass(Class *class) {
            }
        }
 
+        // Miranda Cache不为空
+        // 将新的 Miranda method 添加到方法
+        // 将新的 Miranda method 添加到对应的方法表
        if(miranda_count > 0) {
            /* We've created some new Miranda methods.  Add them to
               the method area.  The method table may also need expanding
               if they are not all overrides */
    
+            // 方法区扩容
            mb = sysRealloc(cb->methods, (cb->methods_count + miranda_count)
                                         * sizeof(MethodBlock));
 
            /* If the realloc of the method area gave us a new pointer, the
               pointers to them in the method table are now wrong. */
            if(mb != cb->methods) {
+               // 方法区扩容之后，如果内存区域发生变化
+               // 则方法表里面的指针更新成新地址
                /*  mb will be left pointing to the end of the methods */
                cb->methods = mb;
                fillinMTable(method_table, mb, cb->methods_count);
            } else
                mb += cb->methods_count;
 
+            // 初始化miranda method在方法区的内存
            memset(mb, 0, miranda_count * sizeof(MethodBlock));
 
            if(new_mtbl_count > 0) {
+               // 方法表扩容
                method_table_size += new_mtbl_count;
                method_table = sysRealloc(method_table, method_table_size *
                                                        sizeof(MethodBlock*));
@@ -1408,6 +1434,8 @@ void linkClass(Class *class) {
 
            /* Now we've expanded the methods, run through the Miranda
               cache and fill them in */
+            // 使用 Miranda cache中的方法初始化方法区中的 Miranda 方法
+            // 注意：mb已经指向方法区中Miranda method开头的位置了
            for(i = 0; i < miranda_count; i++,mb++) {
                MethodBlock *intf_mb = mirandas[i].mb;
 
@@ -1430,6 +1458,7 @@ void linkClass(Class *class) {
                    mb->code = miranda_bridge;
                }
 
+                // 更新方法表为Miranda方法
                method_table[mirandas[i].mtbl_idx] = mb;
            }
 
